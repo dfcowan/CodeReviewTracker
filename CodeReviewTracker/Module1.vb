@@ -1,10 +1,11 @@
-﻿Imports CodeReviewTracker
+﻿Imports System.IO
+Imports CodeReviewTracker
 
 Module Module1
 
     Private ReadOnly Property FileName As String
         Get
-            Return "G:\My Drive\Dropbox\codereview.json"
+            Return "C:\Users\drew_c\My Drive\Dropbox\codereview.json"
         End Get
     End Property
 
@@ -20,16 +21,35 @@ Module Module1
 
         If My.Application.CommandLineArgs.ToList.Count = 0 Then
             SuggestReviewers(reviewers)
-        ElseIf My.Application.CommandLineArgs.ToList.Count = 1 AndAlso My.Application.CommandLineArgs(0).ToLower = "dump" Then
-            DumpReviewers(reviewers)
+            Return
+        ElseIf My.Application.CommandLineArgs.ToList.Count = 1 Then
+            If My.Application.CommandLineArgs(0).ToLower = "dump" Then
+                DumpReviewers(reviewers)
+                Return
+            ElseIf My.Application.CommandLineArgs(0).ToLower = "auto" Then
+                UseGitHubCLIToRecordReview(reviewers)
+                Return
+            ElseIf My.Application.CommandLineArgs(0).ToLower = "-v" Then
+                Console.WriteLine("version 1.01")
+                Return
+            Else
+                Console.WriteLine($"unknown argument { My.Application.CommandLineArgs(0).ToLower}")
+                Return
+            End If
         ElseIf My.Application.CommandLineArgs.ToList.Count = 2 Then
             If (My.Application.CommandLineArgs(0).ToLower = "-r") Then
                 RemoveReviewer(reviewers, My.Application.CommandLineArgs(1))
+                SuggestReviewers(reviewers)
+                Return
             Else
                 RecordReview(reviewers, My.Application.CommandLineArgs.ToList)
+                SuggestReviewers(reviewers)
+                Return
             End If
         ElseIf My.Application.CommandLineArgs.ToList.Count = 3 Then
             RecordReview(reviewers, My.Application.CommandLineArgs.ToList)
+            SuggestReviewers(reviewers)
+            Return
         Else
             Console.WriteLine("For code review suggestions, please supply no arguments.")
             Console.WriteLine("To record code review, please supply two or three reviewer usernames")
@@ -50,6 +70,48 @@ Module Module1
         If sorted.Count = 0 Then
             Console.WriteLine("no reviewers found")
         End If
+    End Sub
+
+    Private Sub UseGitHubCLIToRecordReview(reviewers As List(Of Reviewer))
+        Dim startInfo As New ProcessStartInfo()
+
+        startInfo.FileName = "gh"
+        startInfo.Arguments = "pr view --json reviews --jq "".reviews[].author.login"""
+        startInfo.RedirectStandardOutput = True
+        startInfo.RedirectStandardError = True
+        startInfo.UseShellExecute = False
+        startInfo.CreateNoWindow = True
+
+        Dim reviewerUserNames As New List(Of String)
+
+        Try
+            Using process As Process = Process.Start(startInfo)
+                Using reader As StreamReader = process.StandardOutput
+                    Console.WriteLine("--- GitHub Reviewers ---")
+                    While Not reader.EndOfStream
+                        Dim reviewer As String = reader.ReadLine()
+                        Console.WriteLine(reviewer)
+                        If reviewer <> "cursor" Then
+                            reviewerUserNames.Add(reviewer)
+                        End If
+                    End While
+                End Using
+
+                Using errorReader As StreamReader = process.StandardError
+                    Dim errors As String = errorReader.ReadToEnd()
+                    If Not String.IsNullOrEmpty(errors) Then
+                        Console.WriteLine("Errors/Warnings encountered:")
+                        Console.WriteLine(errors)
+                    End If
+                End Using
+
+                process.WaitForExit()
+            End Using
+        Catch ex As Exception
+            Console.WriteLine("An error occurred trying to start the process: " & ex.Message)
+        End Try
+
+        RecordReview(reviewers, reviewerUserNames)
     End Sub
 
     Private Sub PrintReviewer(reviewer As Reviewer)
