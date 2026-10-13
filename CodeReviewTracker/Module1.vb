@@ -1,5 +1,6 @@
 ﻿Imports System.IO
 Imports CodeReviewTracker
+Imports Newtonsoft.Json.Linq
 
 Module Module1
 
@@ -73,28 +74,50 @@ Module Module1
     End Sub
 
     Private Sub UseGitHubCLIToRecordReview(reviewers As List(Of Reviewer))
-        Dim startInfo As New ProcessStartInfo()
+        Dim startInfo As New ProcessStartInfo With {
+            .FileName = "gh",
+            .Arguments = "pr view --json reviews,reviewRequests",
+            .RedirectStandardOutput = True,
+            .RedirectStandardError = True,
+            .UseShellExecute = False,
+            .CreateNoWindow = True
+        }
 
-        startInfo.FileName = "gh"
-        startInfo.Arguments = "pr view --json reviews --jq "".reviews[].author.login"""
-        startInfo.RedirectStandardOutput = True
-        startInfo.RedirectStandardError = True
-        startInfo.UseShellExecute = False
-        startInfo.CreateNoWindow = True
-
-        Dim reviewerUserNames As New List(Of String)
+        Dim reviewerUserNames As New HashSet(Of String)
 
         Try
             Using process As Process = Process.Start(startInfo)
                 Using reader As StreamReader = process.StandardOutput
-                    Console.WriteLine("--- GitHub Reviewers ---")
-                    While Not reader.EndOfStream
-                        Dim reviewer As String = reader.ReadLine()
-                        Console.WriteLine(reviewer)
-                        If reviewer <> "cursor" Then
-                            reviewerUserNames.Add(reviewer)
-                        End If
-                    End While
+                    Console.WriteLine("--- Calling GitHub CLI ---")
+
+                    Dim jsonResponse As String = process.StandardOutput.ReadToEnd
+
+                    Dim json As JObject = JObject.Parse(jsonResponse)
+
+                    Console.WriteLine("--- Parsing GitHub CLI Response ---")
+
+                    Dim reviewRequests As JArray = CType(json("reviewRequests"), JArray)
+                    If reviewRequests IsNot Nothing Then
+                        For Each item In reviewRequests
+                            If item("login") IsNot Nothing Then
+                                reviewerUserNames.Add(item("login").ToString().ToLowerInvariant())
+                            End If
+                        Next
+                    End If
+
+                    Dim reviews As JArray = CType(json("reviews"), JArray)
+                    If reviews IsNot Nothing Then
+                        For Each item In reviews
+                            If item("author") IsNot Nothing AndAlso item("author")("login") IsNot Nothing Then
+                                reviewerUserNames.Add(item("author")("login").ToString().ToLowerInvariant())
+                            End If
+                        Next
+                    End If
+
+                    reviewerUserNames.Remove("cursor")
+
+                    Console.WriteLine("--- Found Reviewers ---")
+                    Console.WriteLine(String.Join(", ", reviewerUserNames))
                 End Using
 
                 Using errorReader As StreamReader = process.StandardError
@@ -111,7 +134,7 @@ Module Module1
             Console.WriteLine("An error occurred trying to start the process: " & ex.Message)
         End Try
 
-        RecordReview(reviewers, reviewerUserNames)
+        RecordReview(reviewers, reviewerUserNames.ToList)
     End Sub
 
     Private Sub PrintReviewer(reviewer As Reviewer)
